@@ -1,5 +1,7 @@
 import Data.List (sort, sortOn, foldl')
 import Data.Maybe (fromJust)
+import Data.List.NonEmpty (NonEmpty((:|)))
+import Data.Coerce
 
 newtype Deck = Deck [Card] deriving (Show)
 newtype Hand = Hand [Card] deriving (Show)
@@ -8,7 +10,7 @@ data Suit = Clubs | Diamonds | Hearts | Spades deriving (Show, Eq, Enum, Bounded
 data Rank =  Two | Three | Four | Five | Six | Seven | Eight | Nine | Ten | Jack | Queen | King | Ace deriving (Show, Eq, Ord, Enum, Bounded)
 
 generateDeck :: Deck
-generateDeck = Deck [Card value suit | value <- [minBound ..], suit <- [minBound ..]]
+generateDeck = Deck [Card suit value | suit <- [minBound ..], value <- [minBound ..]]
 
 -- Having trouble importing System.Random
 -- randomizeDeck :: Deck -> Deck
@@ -19,12 +21,12 @@ generateDeck = Deck [Card value suit | value <- [minBound ..], suit <- [minBound
 -- newHand = fst handAndNewDeck
 -- newDeck = snd handAndNewDeck
 generateHand :: Deck -> (Hand, Deck)
-generateHand (Deck []) = (Hand [], Deck [])
-generateHand (Deck [x]) = (Hand [x], Deck [])
-generateHand (Deck [x,y]) = (Hand [x,y], Deck [])
-generateHand (Deck [x,y,z]) = (Hand [x,y,z], Deck [])
-generateHand (Deck [x,y,z,t]) = (Hand [x,y,z,t], Deck [])
-generateHand (Deck deck) = (Hand (fst (splitAt 5 deck)), Deck (snd (splitAt 5 deck)))
+generateHand (Deck deck) = 
+    let 
+        splitAt5 = splitAt 5 deck
+        hand = fst splitAt5
+        newDeck = snd splitAt5
+    in (Hand hand, Deck newDeck)
 
 class Display a where
     display :: a -> String
@@ -41,7 +43,13 @@ instance Display Card where
 isFlush (Hand cards) = all (isEqSuit (head cards)) cards
 isStraight (Hand cards) = consecutiveRanks (sortedRanks (Hand cards))
 isStraightFlush (Hand cards) = isFlush (Hand cards) && isStraight (Hand cards)
-isRoyalFlush (Hand cards) = isStraightFlush (Hand cards) && (rank (lowCard (Hand cards)) == Ten) && (rank (highCard (Hand cards)) == Ace)
+isRoyalFlush :: Hand -> Bool
+isRoyalFlush hand = isStraightFlush hand && isRoyal (coerce hand)
+ where
+  isRoyal [] = False
+  isRoyal (x : xs) = case highCard (x :| xs) of
+    Card _ Ace -> True
+    _ -> False
 isTwoPair (Hand cards) = isTwoPairRanks (sortedRanks (Hand cards))
 isPair (Hand cards) = isPairRanks (sortedRanks (Hand cards))
 
@@ -76,6 +84,8 @@ consecutiveRanks [x] = True
 consecutiveRanks [x, y] = fromEnum x + 1 == fromEnum y
 consecutiveRanks (x:y:xs) = fromEnum x + 1 == fromEnum y && consecutiveRanks (y:xs)
 
-lowCard (Hand (x:xs)) = foldl' (\x x' -> if rank x < rank x' then x else x') x xs
+lowCard :: NonEmpty Card -> Card
+lowCard (x :| xs) = foldl' (\x x' -> if rank x < rank x' then x else x') x xs
 
-highCard (Hand (x:xs)) = foldl' (\x x' -> if rank x > rank x' then x else x') x xs
+highCard :: NonEmpty Card -> Card
+highCard (x :| xs) = foldl' (\x x' -> if rank x > rank x' then x else x') x xs
