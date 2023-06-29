@@ -1,4 +1,4 @@
-import Data.List (sort, sortOn)
+import Data.List (sort, sortOn, foldl')
 import Data.Maybe (fromJust)
 
 newtype Deck = Deck [Card] deriving (Show)
@@ -15,17 +15,16 @@ generateDeck = Deck [Card value suit | value <- [minBound ..], suit <- [minBound
 -- randomizeDeck deck = map fst $ sortOn snd $ zip deck (randoms gen)
 
 -- Takes a Deck and puts five cards in one hand, returns Hand and remaining Deck
--- handAndNewDeck = fromJust (generateHand generateDeck)
+-- handAndNewDeck = generateHand generateDeck
 -- newHand = fst handAndNewDeck
 -- newDeck = snd handAndNewDeck
-generateHand :: Deck -> Maybe (Hand, Deck)
--- Note: is there a better way to handle the rest of the cases?
-generateHand (Deck []) = Nothing
-generateHand (Deck [x]) = Nothing
-generateHand (Deck [x,y]) = Nothing
-generateHand (Deck [x,y,z]) = Nothing
-generateHand (Deck [x,y,z,t]) = Nothing
-generateHand (Deck deck) = Just (Hand (take 5 deck), Deck (drop 5 deck))
+generateHand :: Deck -> (Hand, Deck)
+generateHand (Deck []) = (Hand [], Deck [])
+generateHand (Deck [x]) = (Hand [x], Deck [])
+generateHand (Deck [x,y]) = (Hand [x,y], Deck [])
+generateHand (Deck [x,y,z]) = (Hand [x,y,z], Deck [])
+generateHand (Deck [x,y,z,t]) = (Hand [x,y,z,t], Deck [])
+generateHand (Deck deck) = (Hand (fst (splitAt 5 deck)), Deck (snd (splitAt 5 deck)))
 
 class Display a where
     display :: a -> String
@@ -50,9 +49,8 @@ isTwoPairRanks :: [Rank] -> Bool
 isTwoPairRanks [] = False
 isTwoPairRanks [x] = False
 isTwoPairRanks (x:y:xs) = 
-    if x == y
-    then
-        isPairRanks xs
+  if x == y
+    then isPairRanks xs
     else isTwoPairRanks (y:xs)
 
 isPairRanks :: [Rank] -> Bool
@@ -70,23 +68,14 @@ getRanks :: Hand -> [Rank]
 getRanks (Hand cards) = map rank cards
 
 sortRanks :: [Rank] -> [Rank]
-sortRanks rank = sort rank
+sortRanks = sort
 
 consecutiveRanks :: [Rank] -> Bool
 consecutiveRanks [] = True
 consecutiveRanks [x] = True
-consecutiveRanks (x:y:xs) = (succ x == y) && consecutiveRanks (y:xs)
+consecutiveRanks [x, y] = fromEnum x + 1 == fromEnum y
+consecutiveRanks (x:y:xs) = fromEnum x + 1 == fromEnum y && consecutiveRanks (y:xs)
 
-lowCard :: Hand -> Card
-lowCard (Hand []) = error "Empty deck"
-lowCard (Hand [x]) = x
-lowCard (Hand (x:xs))
-    | rank x < rank (lowCard (Hand xs)) = x
-    | otherwise = lowCard (Hand xs)
+lowCard (Hand (x:xs)) = foldl' (\x x' -> if rank x < rank x' then x else x') x xs
 
-highCard :: Hand -> Card
-highCard (Hand []) = error "Empty deck"
-highCard (Hand [x]) = x
-highCard (Hand (x:xs))
-    | rank x > rank (highCard (Hand xs)) = x
-    | otherwise = highCard (Hand xs)
+highCard (Hand (x:xs)) = foldl' (\x x' -> if rank x > rank x' then x else x') x xs
