@@ -1,5 +1,5 @@
 import qualified Data.Set as Set
-import qualified Data.Map.Strict as Map
+import qualified Data.Map as Map
 import Data.List (sort, sortOn, foldl', group)
 import Data.Maybe (fromJust)
 import Data.List.NonEmpty (NonEmpty((:|)))
@@ -28,10 +28,6 @@ instance Monoid Hand where
 generateDeck :: Deck
 generateDeck = Deck $ Set.fromList [Card suit value | suit <- [minBound ..], value <- [minBound ..]]
 
--- Having trouble importing System.Random
--- randomizeDeck :: Deck -> Deck
--- randomizeDeck deck = map fst $ sortOn snd $ zip deck (randoms gen)
-
 -- Takes a Deck and puts five cards in one hand, returns Hand and remaining Deck
 -- handAndNewDeck = generateHand generateDeck
 -- newHand = fst handAndNewDeck
@@ -57,8 +53,7 @@ instance Display Card where
     display card = display (rank card) ++ " of " ++ display (suit card)
 
 isFlush (Hand cards) = Set.size (Set.map suit cards) == 1
--- We map all the cards to their suits, then check if the size of the set is 1
-isStraight (Hand cards) = consecutiveRanks (sortedRanks (Hand cards))
+isStraight = consecutiveRanks . sortedRanks
 isStraightFlush (Hand cards) = isFlush (Hand cards) && isStraight (Hand cards)
 isRoyalFlush :: Hand -> Bool
 isRoyalFlush (Hand cards) = isStraightFlush (Hand cards) && isRoyal (Set.toList cards)
@@ -67,21 +62,34 @@ isRoyalFlush (Hand cards) = isStraightFlush (Hand cards) && isRoyal (Set.toList 
   isRoyal (x : xs) = case highCard (x :| xs) of
     Card _ Ace -> True
     _ -> False
-isTwoPair (Hand cards) = isTwoPairRanks (sortedRanks (Hand cards))
-isPair (Hand cards) = isPairRanks (sortedRanks (Hand cards))
 
-isTwoPairRanks :: [Rank] -> Bool
-isTwoPairRanks [] = False
-isTwoPairRanks [x] = False
-isTwoPairRanks (x:y:xs) = 
-  if x == y
-    then isPairRanks xs
-    else isTwoPairRanks (y:xs)
+isTwoPair (Hand cards) = reasonableRankSet (Hand cards) 2 && enoughUniqueRanks (Hand cards) 2
+isPair (Hand cards) = reasonableRankSet (Hand cards) 2
 
-isPairRanks :: [Rank] -> Bool
-isPairRanks [] = False
-isPairRanks [x] = False
-isPairRanks (x:y:xs) = x == y || isPairRanks (y:xs)
+isThreeOfAKind :: Hand -> Bool
+isThreeOfAKind hand = reasonableRankSet hand 3
+
+isFourOfAKind :: Hand -> Bool
+isFourOfAKind hand = reasonableRankSet hand 4
+
+isFullHouse :: Hand -> Bool
+isFullHouse hand = hasRankSetOf hand 3 && hasRankSetOf hand 2
+
+-- Checks whether there are enough unique ranks in a hand
+enoughUniqueRanks :: Hand -> Int -> Bool
+enoughUniqueRanks (Hand cards) uniqueSets = Map.size (mapRankSets (Hand cards)) <= Set.size cards - uniqueSets
+
+-- Checks whether a rank set of at least size n exists in a hand
+reasonableRankSet :: Hand -> Int -> Bool
+reasonableRankSet (Hand cards) n = any (>= n) $ Map.elems $ mapRankSets (Hand cards)
+
+-- Checks whether a rank set of size n exists in a hand
+hasRankSetOf :: Hand -> Int -> Bool
+hasRankSetOf (Hand cards) n = any (== n) $ mapRankSets (Hand cards)
+
+-- Gets total sets of ranks in a hand
+mapRankSets :: Hand -> Map.Map Rank Int
+mapRankSets (Hand cards) = Map.fromListWith (+) [(rank card, 1) | card <- Set.toList cards]
 
 isEqSuit :: Card -> Card -> Bool
 isEqSuit (Card s1 _) (Card s2 _) = s1 == s2
@@ -107,17 +115,33 @@ lowCard (x :| xs) = foldl' (\x x' -> if rank x < rank x' then x else x') x xs
 highCard :: NonEmpty Card -> Card
 highCard (x :| xs) = foldl' (\x x' -> if rank x > rank x' then x else x') x xs
 
--- Goose's functions from missing lab
-hasNAlike :: (Eq a, Ord a) => Int -> [a] -> Bool
-hasNAlike n = any ((>= n) . length) . group . sort
+-- Old implementations:
+-- hasNAlike :: (Eq a, Ord a) => Int -> [a] -> Bool
+-- hasNAlike n = any ((>= n) . length) . group . sort
 
-isThreeOfAKind :: Hand -> Bool
-isThreeOfAKind = hasNAlike 3 . getRanks
+-- isThreeOfAKind :: Hand -> Bool
+-- isThreeOfAKind = hasNAlike 3 . getRanks
 
-isFourOfAKind :: Hand -> Bool
-isFourOfAKind = hasNAlike 4 . getRanks
+-- isFourOfAKind :: Hand -> Bool
+-- isFourOfAKind = hasNAlike 4 . getRanks
 
-isFullHouse :: Hand -> Bool
-isFullHouse (Hand cs) = groups == [2, 3]
- where
-  groups = sort . map length . group . sort $ Set.toList (Set.map rank cs)
+-- isFullHouse :: Hand -> Bool
+-- isFullHouse (Hand cs) = groups == [2, 3]
+--  where
+--   groups = sort . map length . group . sort $ Set.toList (Set.map rank cs)
+
+-- isTwoPair (Hand cards) = isTwoPairRanks (sortedRanks (Hand cards))
+-- isPair (Hand cards) = isPairRanks (sortedRanks (Hand cards))
+
+-- isTwoPairRanks :: [Rank] -> Bool
+-- isTwoPairRanks [] = False
+-- isTwoPairRanks [x] = False
+-- isTwoPairRanks (x:y:xs) = 
+--   if x == y
+--     then isPairRanks xs
+--     else isTwoPairRanks (y:xs)
+
+-- isPairRanks :: [Rank] -> Bool
+-- isPairRanks [] = False
+-- isPairRanks [x] = False
+-- isPairRanks (x:y:xs) = x == y || isPairRanks (y:xs)
