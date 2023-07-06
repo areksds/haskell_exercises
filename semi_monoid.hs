@@ -1,3 +1,5 @@
+import Data.Set (Set)
+import Data.Map (Map)
 import qualified Data.Set as Set
 import qualified Data.Map as Map
 import Data.List (sort, sortOn, foldl', group)
@@ -7,8 +9,8 @@ import Data.Coerce
 import Data.Monoid
 import Data.Semigroup
 
-newtype Deck = Deck (Set.Set Card) deriving (Show)
-newtype Hand = Hand (Set.Set Card) deriving (Show)
+newtype Deck = Deck (Set Card) deriving (Show)
+newtype Hand = Hand (Set Card) deriving (Show)
 data Card = Card { suit :: Suit, rank :: Rank } deriving (Show, Eq, Ord)
 data Suit = Clubs | Diamonds | Hearts | Spades deriving (Show, Eq, Enum, Bounded, Ord)
 data Rank =  Two | Three | Four | Five | Six | Seven | Eight | Nine | Ten | Jack | Queen | King | Ace deriving (Show, Eq, Ord, Enum, Bounded)
@@ -86,7 +88,7 @@ hasRankSetOf :: Hand -> Int -> Bool
 hasRankSetOf (Hand cards) n = any (== n) $ mapRankSets (Hand cards)
 
 -- Gets total sets of ranks in a hand
-mapRankSets :: Hand -> Map.Map Rank Int
+mapRankSets :: Hand -> Map Rank Int
 mapRankSets (Hand cards) = Map.fromListWith (+) [(rank card, 1) | card <- Set.toList cards]
 
 isEqSuit :: Card -> Card -> Bool
