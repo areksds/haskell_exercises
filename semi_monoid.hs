@@ -14,10 +14,10 @@ data Suit = Clubs | Diamonds | Hearts | Spades deriving (Show, Eq, Enum, Bounded
 data Rank =  Two | Three | Four | Five | Six | Seven | Eight | Nine | Ten | Jack | Queen | King | Ace deriving (Show, Eq, Ord, Enum, Bounded)
 
 instance Semigroup Deck where
-    (<>) = (<>)
+    (<>) (Deck cardsOne) (Deck cardsTwo) = (Deck (cardsOne <> cardsTwo))
 
 instance Semigroup Hand where
-    (<>) = (<>)
+    (<>) (Hand cardsOne) (Hand cardsTwo) = (Hand (cardsOne <> cardsTwo))
 
 instance Monoid Deck where
     mempty = Deck Set.empty
@@ -35,9 +35,7 @@ generateDeck = Deck $ Set.fromList [Card suit value | suit <- [minBound ..], val
 generateHand :: Deck -> (Hand, Deck)
 generateHand (Deck deck) = 
     let 
-        splitAt5 = Set.splitAt 5 deck
-        hand = fst splitAt5
-        newDeck = snd splitAt5
+        (hand, newDeck) = Set.splitAt 5 deck
     in (Hand hand, Deck newDeck)
 
 class Display a where
