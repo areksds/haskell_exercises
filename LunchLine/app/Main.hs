@@ -45,13 +45,13 @@ WeeklyBudget
 resetDay :: Int
 resetDay = 1
 
-newtype AppM a = AppM (StateT Int (ReaderT Env IO) a)
-  deriving newtype (Functor, Applicative, Monad, MonadReader Env, MonadState Int, MonadIO)
+newtype AppM a = AppM (ReaderT Env IO a)
+  deriving newtype (Functor, Applicative, Monad, MonadReader Env, MonadIO)
 
 data Env = Env { envConn :: SqlBackend }
 
-runAppM :: MonadIO m => Env -> Int -> AppM a -> m a
-runAppM env budget (AppM x) = liftIO $ runReaderT (evalStateT x budget) env
+runAppM :: MonadIO m => Env -> AppM a -> m a
+runAppM env (AppM x) = liftIO $ runReaderT x env
 
 runDB :: ReaderT SqlBackend IO a -> AppM a
 runDB body = do
@@ -91,7 +91,6 @@ setBudget budget = do
   runDB $ do
     deleteWhere [WeeklyBudgetYear ==. year, WeeklyBudgetWeek ==. week]
     insert_ $ WeeklyBudget year week budget
-  put budget
   liftIO . putStrLn $ "Set budget to " <> show budget
 
 viewBudget :: AppM ()
@@ -155,7 +154,7 @@ main :: IO ()
 main =
   runNoLoggingT $
     withSqliteConn ":memory:" $ \conn -> do -- :memory: means it writes to memory, anything else will be a sqlite file
-      runAppM (Env conn) 100 (runDB (runMigration migrateAll) >>= \_ -> appMain)
+      runAppM (Env conn) (runDB (runMigration migrateAll) >>= \_ -> appMain)
 
   -- case fst words command
   -- main should load up config, database, etc
