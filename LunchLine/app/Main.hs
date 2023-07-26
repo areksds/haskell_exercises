@@ -18,7 +18,9 @@ import Database.Persist.TH
 import Control.Monad.Logger
 import Data.List (foldl')
 import Data.Maybe (fromMaybe)
-import Database.Esqueleto.Experimental hiding (get)
+import Database.Esqueleto.Experimental hiding (get, (==.))
+import Data.Time.Clock
+import Data.Time.Calendar.WeekDate
 
 -- REMAINING
 -- Change state to instead be a new table that stores a budget for each week
@@ -27,13 +29,21 @@ share [mkPersist sqlSettings, mkMigrate "migrateAll"] [persistLowerCase|
 LineItem
   name String
   amount Int
+  year Int
+  week Int
+  day Int
+  deriving Show
+
+WeeklyBudget
+  year Int
+  week Int
+  amount Int
   deriving Show
 |] -- LineItem is an arbitrary type
 
--- ReaderT Env IO a ~~ Env -> IO a
--- StateT s IO a ~~ s -> IO (a, s) -- evalStateT -- s -> IO a
--- StateT Int (ReaderT Env IO) a -- evalStateT -- s -> ReaderT Env IO a
--- x is StateT Int (ReaderT Env IO) a
+-- 1 for Monday, 7 for Sunday
+resetDay :: Int
+resetDay = 1
 
 newtype AppM a = AppM (StateT Int (ReaderT Env IO) a)
   deriving newtype (Functor, Applicative, Monad, MonadReader Env, MonadState Int, MonadIO)
@@ -43,29 +53,10 @@ data Env = Env { envConn :: SqlBackend }
 runAppM :: MonadIO m => Env -> Int -> AppM a -> m a
 runAppM env budget (AppM x) = liftIO $ runReaderT (evalStateT x budget) env
 
--- ask :: MonadReader r m => m r
--- asks :: MonadReader r m => (r -> a) -> m a
--- envConn :: r -> a ~ Env -> SqlBackend
--- conn :: SqlBackend
--- body :: ReaderT SqlBackend IO a
-
--- flip' :: (a -> b -> c) -> b -> a -> c
--- flip' f b a = f a b
-
 runDB :: ReaderT SqlBackend IO a -> AppM a
 runDB body = do
   conn <- asks envConn
   liftIO $ runSqlConn body conn
-
--- body' :: ReaderT SqlBackend IO a
--- body' = undefined
-
--- runDB' :: AppM a
--- runDB' = do
---   liftIO $ flip runReaderT () $ do
---     (pure 5 :: Maybe Int) -- FAILS BECAUSE MONAD IS WRONG
-
---   (asks envConn >>= (\conn -> liftIO $ runSqlConn body' conn) :: AppM a)
 
 spend :: Int -> LineItem -> Int
 spend n e = n - (lineItemAmount e)
@@ -81,17 +72,52 @@ getLineItemTotal = selectSum $ do
   selectSum = fmap (maybe 0 unValue) . selectOne
   -- Note: in Haskell >= 9, due to simplified subsumption, you will need to do replace selectOne with (\q -> selectOne q)
 
--- appMain :: AppM ()
--- appMain = do
---   total <- runDB $ do
---     insert_ $ LineItem "Pizza" 11
---     insert_ $ LineItem "Burger" 12
---     getLineItemTotal
---   let remainingBudget = weeklyBudget - total
---   liftIO .  putStrLn $ "Remaining Budget: " <> show remainingBudget
+getLineItemTotalWeek :: (MonadIO m) => Int -> Int -> SqlPersistT m Int
+getLineItemTotalWeek year week = do
+    items <- selectList [LineItemYear ==. year, LineItemWeek ==. week] []
+    let totalAmount = sum $ map (lineItemAmount . entityVal) items
+    return totalAmount
 
--- make commands their own data types (Command data type)
--- write something that parses the commands
+getCurrentWeek :: Int -> IO (Int, Int, Int)
+getCurrentWeek resetDay = do
+    currentDay <- getCurrentTime
+    let (year, week, day) = toWeekDate $ utctDay currentDay
+    let adjustedWeek = if day < resetDay then week - 1 else week
+    return (fromIntegral year, adjustedWeek, resetDay)
+
+setBudget :: Int -> AppM ()
+setBudget budget = do
+  (year, week, _) <- liftIO $ getCurrentWeek resetDay
+  runDB $ do
+    deleteWhere [WeeklyBudgetYear ==. year, WeeklyBudgetWeek ==. week]
+    insert_ $ WeeklyBudget year week budget
+  put budget
+  liftIO . putStrLn $ "Set budget to " <> show budget
+
+viewBudget :: AppM ()
+viewBudget = do
+  (year, week, _) <- liftIO $ getCurrentWeek resetDay
+  total <- runDB $ do
+    getLineItemTotalWeek year week
+  budget <- runDB $ do
+    maybeWeeklyBudget <- selectFirst [WeeklyBudgetYear ==. year, WeeklyBudgetWeek ==. week] []
+    case maybeWeeklyBudget of
+      Nothing -> return 0
+      Just weeklyBudget -> return $ weeklyBudgetAmount $ entityVal weeklyBudget
+  let remainingBudget = budget - total
+  liftIO . putStrLn $ "Remaining Budget: " <> show remainingBudget
+
+addLineItem :: String -> Int -> AppM ()
+addLineItem label price = do
+  (year, week, day) <- liftIO $ getCurrentWeek resetDay
+  runDB $ insert_ $ LineItem label price year week day
+  liftIO . putStrLn $ "Added new transaction: " <> label <> " for " <> show price
+
+viewLineItems :: AppM ()
+viewLineItems = do
+  lineItems <- runDB $ do
+    selectList @LineItem @_ @IO [] []
+  liftIO $ print lineItems
 
 data Command
   = AddLineItem String Int
@@ -100,28 +126,6 @@ data Command
   | ViewBudget
   | Exit
   deriving Show
-
-setBudget :: Int -> AppM ()
-setBudget budget = put budget
-
-viewBudget :: AppM ()
-viewBudget = do
-  total <- runDB $ do
-    getLineItemTotal
-  weeklyBudget <- get -- get just retrieves the state value
-  let remainingBudget = weeklyBudget - total
-  liftIO .  putStrLn $ "Remaining Budget: " <> show remainingBudget
-
-addLineItem :: String -> Int -> AppM ()
-addLineItem label price = do
-  runDB $ insert_ $ LineItem label price
-  liftIO . putStrLn $ "Added new transaction: " <> label <> " for " <> show price
-
-viewLineItems :: AppM ()
-viewLineItems = do
-  lineItems <- runDB $ do
-    selectList @LineItem @_ @IO [] []
-  liftIO $ print lineItems
 
 parseCommand :: String -> Maybe Command
 parseCommand command = case words command of
@@ -151,12 +155,48 @@ main :: IO ()
 main =
   runNoLoggingT $
     withSqliteConn ":memory:" $ \conn -> do -- :memory: means it writes to memory, anything else will be a sqlite file
-      runAppM (Env conn) 100 (
-        runDB (runMigration migrateAll) >>= \_ -> appMain)
+      runAppM (Env conn) 100 (runDB (runMigration migrateAll) >>= \_ -> appMain)
 
   -- case fst words command
   -- main should load up config, database, etc
   -- AppMain is what should run the actual app
+
+-- ReaderT Env IO a ~~ Env -> IO a
+-- StateT s IO a ~~ s -> IO (a, s) -- evalStateT -- s -> IO a
+-- StateT Int (ReaderT Env IO) a -- evalStateT -- s -> ReaderT Env IO a
+-- x is StateT Int (ReaderT Env IO) a
+
+-- OLD CODE
+-- body' :: ReaderT SqlBackend IO a
+-- body' = undefined
+
+-- runDB' :: AppM a
+-- runDB' = do
+--   liftIO $ flip runReaderT () $ do
+--     (pure 5 :: Maybe Int) -- FAILS BECAUSE MONAD IS WRONG
+
+--   (asks envConn >>= (\conn -> liftIO $ runSqlConn body' conn) :: AppM a)
+
+
+-- OLD CODE
+-- appMain :: AppM ()
+-- appMain = do
+--   total <- runDB $ do
+--     insert_ $ LineItem "Pizza" 11
+--     insert_ $ LineItem "Burger" 12
+--     getLineItemTotal
+--   let remainingBudget = weeklyBudget - total
+--   liftIO .  putStrLn $ "Remaining Budget: " <> show remainingBudget
+
+-- make commands their own data types (Command data type)
+-- write something that parses the commands
+
+
+-- ask :: MonadReader r m => m r
+-- asks :: MonadReader r m => (r -> a) -> m a
+-- envConn :: r -> a ~ Env -> SqlBackend
+-- conn :: SqlBackend
+-- body :: ReaderT SqlBackend IO a
 
 -- Intuition:
 -- Read -> Eval -> Print -> Loop

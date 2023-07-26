@@ -13,6 +13,7 @@ dependencies:
 - resource-pool
 - monad-logger
 - esqueleto
+- time
 
 ghc-options:
 - -Wall
