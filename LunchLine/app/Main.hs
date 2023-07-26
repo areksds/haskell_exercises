@@ -39,11 +39,11 @@ WeeklyBudget
   week Int
   amount Int
   deriving Show
-|] -- LineItem is an arbitrary type
 
--- 1 for Monday, 7 for Sunday
-resetDay :: Int
-resetDay = 1
+ResetDay
+  day Int
+  deriving Show
+|] -- LineItem is an arbitrary type
 
 newtype AppM a = AppM (ReaderT Env IO a)
   deriving newtype (Functor, Applicative, Monad, MonadReader Env, MonadIO)
@@ -75,41 +75,64 @@ getLineItemTotal = selectSum $ do
 getLineItemTotalWeek :: (MonadIO m) => Int -> Int -> SqlPersistT m Int
 getLineItemTotalWeek year week = do
     items <- selectList [LineItemYear ==. year, LineItemWeek ==. week] []
-    let totalAmount = sum $ map (lineItemAmount . entityVal) items
-    return totalAmount
+    pure $ sum $ map (lineItemAmount . entityVal) items
 
 getCurrentWeek :: Int -> IO (Int, Int, Int)
 getCurrentWeek resetDay = do
     currentDay <- getCurrentTime
     let (year, week, day) = toWeekDate $ utctDay currentDay
     let adjustedWeek = if day < resetDay then week - 1 else week
-    return (fromIntegral year, adjustedWeek, resetDay)
+    pure (fromIntegral year, adjustedWeek, resetDay)
+
+-- get reset day from the database
+resetDay :: (MonadIO m) => SqlPersistT m Int
+resetDay = do
+  maybeResetDay <- selectFirst [] []
+  case maybeResetDay of
+    Nothing -> do
+      insert_ $ ResetDay 1
+      pure 1
+    Just resetDay -> pure $ resetDayDay $ entityVal resetDay
 
 setBudget :: Int -> AppM ()
 setBudget budget = do
-  (year, week, _) <- liftIO $ getCurrentWeek resetDay
   runDB $ do
+    weekStartsAt <- resetDay
+    (year, week, _) <- liftIO $ getCurrentWeek weekStartsAt
     deleteWhere [WeeklyBudgetYear ==. year, WeeklyBudgetWeek ==. week]
     insert_ $ WeeklyBudget year week budget
   liftIO . putStrLn $ "Set budget to " <> show budget
 
 viewBudget :: AppM ()
 viewBudget = do
-  (year, week, _) <- liftIO $ getCurrentWeek resetDay
-  total <- runDB $ do
-    getLineItemTotalWeek year week
-  budget <- runDB $ do
-    maybeWeeklyBudget <- selectFirst [WeeklyBudgetYear ==. year, WeeklyBudgetWeek ==. week] []
-    case maybeWeeklyBudget of
-      Nothing -> return 0
-      Just weeklyBudget -> return $ weeklyBudgetAmount $ entityVal weeklyBudget
-  let remainingBudget = budget - total
+  remainingBudget <- runDB $ do
+    weekStartsAt <- resetDay
+    (year, week, _) <- liftIO $ getCurrentWeek weekStartsAt
+    total <- getLineItemTotalWeek year week
+    budget <- do
+      maybeWeeklyBudget <- selectFirst [WeeklyBudgetYear ==. year, WeeklyBudgetWeek ==. week] []
+      case maybeWeeklyBudget of
+        Nothing -> do
+          insert_ $ WeeklyBudget year week 100
+          pure 100
+        Just weeklyBudget -> pure $ weeklyBudgetAmount $ entityVal weeklyBudget
+    pure (budget - total)
   liftIO . putStrLn $ "Remaining Budget: " <> show remainingBudget
+
+reset :: Int -> AppM ()
+reset day = do
+  runDB $ do
+    deleteWhere [ResetDayDay ==. day]
+    insert_ $ ResetDay day
+  let printDay = if day == 1 then "Monday" else "Sunday"
+  liftIO . putStrLn $ "Reset day to " <> show printDay
 
 addLineItem :: String -> Int -> AppM ()
 addLineItem label price = do
-  (year, week, day) <- liftIO $ getCurrentWeek resetDay
-  runDB $ insert_ $ LineItem label price year week day
+  runDB $ do
+    weekStartsAt <- resetDay
+    (year, week, day) <- liftIO $ getCurrentWeek weekStartsAt
+    insert_ $ LineItem label price year week day
   liftIO . putStrLn $ "Added new transaction: " <> label <> " for " <> show price
 
 viewLineItems :: AppM ()
@@ -122,6 +145,7 @@ data Command
   = AddLineItem String Int
   | ViewLineItems
   | SetBudget Int
+  | Reset Int
   | ViewBudget
   | Exit
   deriving Show
@@ -132,6 +156,7 @@ parseCommand command = case words command of
   ["view"] -> Just ViewLineItems
   ["set",budget] -> Just (SetBudget (read budget))
   ["budget"] -> Just ViewBudget
+  ["reset",day] -> Just (Reset (read day))
   ["exit"] -> Just Exit
   _ -> Nothing
 
@@ -140,6 +165,7 @@ runCommand Exit = pure ()
 runCommand ViewBudget = viewBudget
 runCommand ViewLineItems = viewLineItems
 runCommand (SetBudget budget) = setBudget budget
+runCommand (Reset day) = reset day
 runCommand (AddLineItem label price) = addLineItem label price
 
 appMain :: AppM()
